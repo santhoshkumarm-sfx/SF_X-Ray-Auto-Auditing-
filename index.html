@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SF X-ray Auto Auditing</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.3/chart.umd.min.js"></script>
+<style>
+  :root{
+    --primary:#1D6A3C; --primary-dark:#134D2B; --accent:#8DC63F; --warn:#F5A623;
+    --danger:#C0392B; --bg:#F6F8F7; --card:#FFFFFF; --border:#E5EAE7;
+    --text:#1B2521; --text-muted:#6B7770; --radius:10px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--text);}
+  .app{display:flex;min-height:100vh;}
+
+  /* Sidebar */
+  .sidebar{width:230px;background:#fff;border-right:1px solid var(--border);
+    display:flex;flex-direction:column;padding:20px 14px;flex-shrink:0;}
+  .brand{display:flex;align-items:center;gap:10px;padding:4px 6px 22px 6px;}
+  .brand img{width:34px;height:34px;border-radius:8px;}
+  .brand-name{font-weight:800;font-size:15px;color:var(--primary-dark);letter-spacing:.2px;}
+  .brand-sub{font-size:11px;color:var(--text-muted);margin-top:-2px;}
+  .nav-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;
+    cursor:pointer;color:var(--text-muted);font-size:14px;font-weight:600;margin-bottom:2px;}
+  .nav-item:hover{background:#F0F5F1;color:var(--primary-dark);}
+  .nav-item.active{background:var(--primary);color:#fff;}
+  .nav-icon{width:18px;text-align:center;}
+  .sidebar-footer{margin-top:auto;padding-top:14px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted);}
+  .mode-pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;margin-top:6px;}
+  .mode-live{background:#E4F5E1;color:var(--primary-dark);}
+  .mode-offline{background:#FBE3E3;color:var(--danger);}
+
+  /* Main */
+  .main{flex:1;padding:26px 32px;max-width:1400px;}
+  h1{font-size:22px;margin:0 0 4px 0;color:var(--primary-dark);}
+  .page-sub{color:var(--text-muted);font-size:13px;margin-bottom:20px;}
+  .panel{display:none;}
+  .panel.active{display:block;}
+
+  .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px;}
+  .kpi{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;}
+  .kpi-label{font-size:12px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.3px;}
+  .kpi-value{font-size:26px;font-weight:800;color:var(--primary-dark);margin-top:4px;}
+
+  .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:18px;}
+  .card h3{margin:0 0 12px 0;font-size:15px;color:var(--primary-dark);}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{text-align:left;color:var(--text-muted);font-weight:700;font-size:11px;text-transform:uppercase;
+    letter-spacing:.3px;padding:8px 10px;border-bottom:2px solid var(--border);}
+  td{padding:9px 10px;border-bottom:1px solid var(--border);}
+  tr:hover td{background:#FAFCFA;}
+
+  .btn{background:var(--primary);color:#fff;border:none;border-radius:8px;padding:9px 16px;
+    font-size:13px;font-weight:700;cursor:pointer;}
+  .btn:hover{background:var(--primary-dark);}
+  .btn:disabled{background:#B9C4BE;cursor:not-allowed;}
+  .btn.secondary{background:#fff;color:var(--primary-dark);border:1px solid var(--primary);}
+  .btn.secondary:hover{background:#F0F5F1;}
+  .btn.danger{background:var(--danger);}
+  .btn.danger:hover{background:#96281D;}
+  .btn.warn{background:var(--warn);}
+  .btn-row{display:flex;gap:8px;flex-wrap:wrap;}
+
+  input[type=text],input[type=password],input[type=number],input[type=file],select,textarea{
+    width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;
+    font-family:inherit;background:#fff;color:var(--text);}
+  label{font-size:12px;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;}
+  .field{margin-bottom:14px;}
+  .field-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+
+  .badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:11px;font-weight:700;}
+  .badge-original{background:#E4F5E1;color:var(--primary-dark);}
+  .badge-review{background:#FDF0DC;color:#B9720C;}
+  .badge-mismatch{background:#FBE3E3;color:var(--danger);}
+  .badge-approved{background:#E4F5E1;color:var(--primary-dark);}
+  .badge-rejected{background:#F1F1F1;color:#6B6B6B;}
+
+  .progress-outer{background:#EDEFEC;border-radius:999px;height:10px;overflow:hidden;margin:10px 0;}
+  .progress-inner{background:linear-gradient(90deg,var(--primary),var(--accent));height:100%;width:0%;transition:width .3s;}
+
+  .review-grid{display:grid;grid-template-columns:1.1fr 1fr;gap:20px;}
+  .xray-img{width:100%;border-radius:8px;border:1px solid var(--border);background:#111;}
+  .similar-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:10px;}
+  .similar-card{border:1px solid var(--border);border-radius:8px;padding:6px;text-align:center;font-size:11px;}
+  .similar-card img{width:100%;border-radius:6px;margin-bottom:4px;}
+
+  .toast{position:fixed;bottom:20px;right:20px;background:var(--primary-dark);color:#fff;
+    padding:12px 18px;border-radius:8px;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.15);
+    opacity:0;transform:translateY(10px);transition:all .25s;z-index:999;}
+  .toast.show{opacity:1;transform:translateY(0);}
+  .toast.error{background:var(--danger);}
+
+  .filters{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px;}
+  .chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+  .chart-box{position:relative;height:280px;}
+  .empty-state{text-align:center;padding:40px 20px;color:var(--text-muted);}
+  .setup-banner{background:#FDF0DC;border:1px solid #F3D8A8;border-radius:var(--radius);
+    padding:14px 18px;margin-bottom:20px;font-size:13px;color:#7A5714;}
+  .setup-banner b{color:#5B4110;}
+  code.inline{background:#F0F5F1;padding:1px 6px;border-radius:4px;font-size:12px;}
+  .spinner{width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;
+    display:inline-block;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <div class="sidebar">
+    <div class="brand">
+      <img src="data:image/png;base64,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" alt="Shadowfax">
+      <div>
+        <div class="brand-name">Shadowfax</div>
+        <div class="brand-sub">X-ray Auto Auditing</div>
+      </div>
+    </div>
+    <div class="nav-item active" data-panel="home"><span class="nav-icon">🏠</span> Home</div>
+    <div class="nav-item" data-panel="upload"><span class="nav-icon">📤</span> Upload</div>
+    <div class="nav-item" data-panel="results"><span class="nav-icon">🔍</span> Results</div>
+    <div class="nav-item" data-panel="verified"><span class="nav-icon">🗄️</span> Verified DB</div>
+    <div class="nav-item" data-panel="analytics"><span class="nav-icon">📊</span> Analytics</div>
+    <div class="nav-item" data-panel="settings"><span class="nav-icon">⚙️</span> Settings</div>
+    <div class="sidebar-footer">
+      Backend status:
+      <div id="connStatus" class="mode-pill mode-offline">Not connected</div>
+    </div>
+  </div>
+
+  <div class="main">
+
+    <!-- HOME -->
+    <div class="panel active" id="panel-home">
+      <h1>Overview</h1>
+      <div class="page-sub">Live counts from your Google Sheet.</div>
+      <div id="homeSetupBanner"></div>
+      <div class="kpi-grid" id="kpiGrid"></div>
+      <div class="card">
+        <h3>Recent Activity</h3>
+        <div id="recentActivityTable"><div class="empty-state">Connect your backend on the Settings tab to load data.</div></div>
+      </div>
+    </div>
+
+    <!-- UPLOAD -->
+    <div class="panel" id="panel-upload">
+      <h1>Upload &amp; Verify</h1>
+      <div class="page-sub">Import shipments and run the audit pipeline.</div>
+
+      <div class="card">
+        <h3>Import CSV</h3>
+        <div class="field"><label>CSV with columns: AWB, Product Name, Product Category</label>
+          <input type="file" id="csvFile" accept=".csv"></div>
+        <div id="csvPreview"></div>
+        <div class="btn-row"><button class="btn" id="importCsvBtn" disabled>Import into Incoming Queue</button></div>
+      </div>
+
+      <div class="card">
+        <h3>Verification Queue</h3>
+        <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);" id="queueKpis"></div>
+        <div class="field" style="max-width:320px;">
+          <label>Batch size per run (Apps Script executes in short bursts)</label>
+          <input type="number" id="batchLimit" value="8" min="1" max="20">
+        </div>
+        <div class="btn-row">
+          <button class="btn" id="startVerifyBtn">🚀 Start Verification</button>
+          <button class="btn secondary" id="refreshQueueBtn">Refresh Queue</button>
+        </div>
+        <div id="progressWrap" style="display:none;margin-top:14px;">
+          <div class="progress-outer"><div class="progress-inner" id="progressBar"></div></div>
+          <div id="progressText" style="font-size:12px;color:var(--text-muted);"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RESULTS -->
+    <div class="panel" id="panel-results">
+      <h1>Results</h1>
+      <div class="page-sub">Search, filter, and review AI predictions.</div>
+
+      <div class="card">
+        <div class="filters">
+          <div><label>Search AWB</label><input type="text" id="filterAwb" placeholder="AWB..."></div>
+          <div><label>Category</label><select id="filterCategory"><option value="">All</option></select></div>
+          <div><label>Classification</label><select id="filterClass"><option value="">All</option></select></div>
+          <div><label>Status</label><select id="filterStatus"><option value="">All</option></select></div>
+        </div>
+        <div class="btn-row" style="margin-bottom:10px;">
+          <button class="btn secondary" id="applyResultFilters">Apply Filters</button>
+          <button class="btn secondary" id="exportResultsCsv">⬇️ Export CSV</button>
+        </div>
+        <div id="resultsTable"><div class="empty-state">No data loaded yet.</div></div>
+      </div>
+
+      <div class="card" id="reviewCard" style="display:none;">
+        <h3>Review — <span id="reviewAwbTitle"></span></h3>
+        <div class="review-grid">
+          <div>
+            <img id="reviewImage" class="xray-img" alt="X-ray">
+            <div style="margin-top:10px;">
+              <label>Zoom</label>
+              <input type="range" id="zoomSlider" min="100" max="400" value="100" step="50">
+            </div>
+          </div>
+          <div>
+            <div class="field"><label>Product / Category</label><div id="reviewMeta"></div></div>
+            <div class="field"><label>AI Prediction</label><div id="reviewPrediction"></div></div>
+            <div class="field"><label>AI Reason</label><div id="reviewReason" style="font-size:13px;background:#F6F8F7;padding:10px;border-radius:8px;"></div></div>
+            <div class="field"><label>Final Remark (override if needed)</label>
+              <select id="finalRemark"></select>
+            </div>
+            <div class="field"><label>Review Notes</label><textarea id="reviewNotes" rows="2"></textarea></div>
+            <div class="btn-row">
+              <button class="btn" id="approveBtn">✅ Approve</button>
+              <button class="btn danger" id="rejectBtn">❌ Reject Prediction</button>
+            </div>
+          </div>
+        </div>
+        <h3 style="margin-top:18px;">Similar Verified Examples <span style="font-weight:400;font-size:11px;color:var(--text-muted);">(matched by product + category)</span></h3>
+        <div class="similar-grid" id="similarGrid"></div>
+      </div>
+    </div>
+
+    <!-- VERIFIED DB -->
+    <div class="panel" id="panel-verified">
+      <h1>Verified Database</h1>
+      <div class="page-sub">Human-approved ground truth used for retrieval context.</div>
+      <div class="card">
+        <div class="filters" style="grid-template-columns:repeat(3,1fr);">
+          <div><label>Search AWB / Product</label><input type="text" id="verifiedSearch"></div>
+          <div><label>Category</label><select id="verifiedCategoryFilter"><option value="">All</option></select></div>
+          <div><label>Remark</label><select id="verifiedRemarkFilter"><option value="">All</option></select></div>
+        </div>
+        <div class="btn-row" style="margin-bottom:10px;">
+          <button class="btn secondary" id="applyVerifiedFilters">Apply Filters</button>
+          <button class="btn secondary" id="exportVerifiedCsv">⬇️ Export CSV</button>
+        </div>
+        <div id="verifiedTable"><div class="empty-state">No data loaded yet.</div></div>
+      </div>
+    </div>
+
+    <!-- ANALYTICS -->
+    <div class="panel" id="panel-analytics">
+      <h1>Analytics</h1>
+      <div class="page-sub">Trends and distribution across all verifications.</div>
+      <div class="kpi-grid" id="analyticsKpis"></div>
+      <div class="chart-grid">
+        <div class="card"><h3>Classification Distribution</h3><div class="chart-box"><canvas id="chartDist"></canvas></div></div>
+        <div class="card"><h3>Most Common Categories</h3><div class="chart-box"><canvas id="chartCategories"></canvas></div></div>
+      </div>
+      <div class="card"><h3>Verifications Over Time</h3><div class="chart-box"><canvas id="chartTrend"></canvas></div></div>
+      <div class="chart-grid">
+        <div class="card"><h3>Confidence Distribution</h3><div class="chart-box"><canvas id="chartConfidence"></canvas></div></div>
+        <div class="card"><h3>Database Growth</h3><div class="chart-box"><canvas id="chartGrowth"></canvas></div></div>
+      </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="panel" id="panel-settings">
+      <h1>Settings</h1>
+      <div class="page-sub">Connect this dashboard to your Apps Script backend.</div>
+
+      <div class="card">
+        <h3>Backend Connection</h3>
+        <div class="field">
+          <label>Apps Script Web App URL (ends in <code class="inline">/exec</code>)</label>
+          <input type="text" id="webAppUrlInput" placeholder="https://script.google.com/macros/s/XXXXX/exec">
+        </div>
+        <div class="btn-row">
+          <button class="btn" id="saveWebAppUrl">Save &amp; Connect</button>
+          <button class="btn secondary" id="testConnection">Test Connection</button>
+        </div>
+        <div id="settingsStatus" style="margin-top:10px;font-size:13px;"></div>
+      </div>
+
+      <div class="card">
+        <h3>Deployment Reference</h3>
+        <p style="font-size:13px;color:var(--text-muted);">
+          Google Sheet: <a href="https://docs.google.com/spreadsheets/d/11JVY6jNyM7hKxgr3N7nbgITileLXpARSuazwk3Ey_Kk/edit" target="_blank">SF X-Ray Auto Auditing</a><br>
+          Drive folder: <a href="https://drive.google.com/drive/folders/1PWIlRSkp38Cocj5cE4kmb6lby0xd292b" target="_blank">SF_X-Ray Auto Auditing</a>
+        </p>
+        <p style="font-size:13px;color:var(--text-muted);">
+          Paste <code class="inline">Code.gs</code> into <b>Extensions → Apps Script</b> on that sheet, run
+          <code class="inline">setupSheets()</code> once, run <code class="inline">setOpenAiKey('sk-...')</code> once,
+          then <b>Deploy → New deployment → Web app</b> (Execute as: Me, Access: Anyone with the link).
+          Paste the resulting URL above.
+        </p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ==================================================================
+   State & persistence
+   ================================================================== */
+const CLASSIFICATIONS = ['Original','Product Mismatch','Quantity Short','Empty Shipment','Fake Empty','Unable to Identify','Needs Manual Review'];
+const DEFAULT_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwCFGiisan_azsuPf1puAjAew4zCYL-rMZM2KuUv1RgPaJKk7ShDEaTyaVNRKGRGLBDLA/exec';
+const state = { webAppUrl: DEFAULT_WEB_APP_URL, results: [], verified: [], incoming: [], stats: null, currentReviewAwb: null };
+let charts = {};
+
+async function storageGet(key){
+  try{
+    if (window.storage) { const r = await window.storage.get(key); return r ? r.value : null; }
+  }catch(e){}
+  return null;
+}
+async function storageSet(key, value){
+  try{ if (window.storage) await window.storage.set(key, value); }catch(e){}
+}
+
+function showToast(msg, isError){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (isError ? ' error' : '');
+  setTimeout(()=> t.className = 'toast', 3000);
+}
+
+/* ==================================================================
+   API layer — GET via query params, POST as text/plain to dodge
+   Apps Script's lack of CORS-preflight support.
+   ================================================================== */
+async function apiGet(action, params){
+  if (!state.webAppUrl) throw new Error('Backend not connected. Set the Web App URL in Settings.');
+  const url = new URL(state.webAppUrl);
+  url.searchParams.set('action', action);
+  Object.entries(params||{}).forEach(([k,v])=> url.searchParams.set(k, v));
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+async function apiPost(action, body){
+  if (!state.webAppUrl) throw new Error('Backend not connected. Set the Web App URL in Settings.');
+  const res = await fetch(state.webAppUrl, {
+    method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify(Object.assign({action}, body||{}))
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+/* ==================================================================
+   Navigation
+   ================================================================== */
+document.querySelectorAll('.nav-item').forEach(item=>{
+  item.addEventListener('click', ()=>{
+    document.querySelectorAll('.nav-item').forEach(i=>i.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+    item.classList.add('active');
+    document.getElementById('panel-'+item.dataset.panel).classList.add('active');
+    if(item.dataset.panel==='home') loadHome();
+    if(item.dataset.panel==='upload') loadUpload();
+    if(item.dataset.panel==='results') loadResults();
+    if(item.dataset.panel==='verified') loadVerified();
+    if(item.dataset.panel==='analytics') loadAnalytics();
+  });
+});
+
+function badge(label){
+  const map = {
+    'Original':'badge-original','Auto Approved':'badge-original','Approved':'badge-approved',
+    'Manual Review':'badge-review','Needs Manual Review':'badge-review','Unable to Identify':'badge-review',
+    'Product Mismatch':'badge-mismatch','Quantity Short':'badge-mismatch','Empty Shipment':'badge-mismatch',
+    'Fake Empty':'badge-mismatch','Rejected':'badge-rejected',
+  };
+  return `<span class="badge ${map[label]||'badge-review'}">${label}</span>`;
+}
+
+function setConnStatus(ok){
+  const el = document.getElementById('connStatus');
+  if(ok){ el.textContent='Connected'; el.className='mode-pill mode-live'; }
+  else{ el.textContent='Not connected'; el.className='mode-pill mode-offline'; }
+}
+
+/* ==================================================================
+   HOME
+   ================================================================== */
+async function loadHome(){
+  const banner = document.getElementById('homeSetupBanner');
+  if(!state.webAppUrl){
+    banner.innerHTML = `<div class="setup-banner"><b>Not connected yet.</b> Go to <b>Settings</b> and paste your deployed Apps Script Web App URL to load live data from your Google Sheet.</div>`;
+    document.getElementById('kpiGrid').innerHTML = '';
+    return;
+  }
+  banner.innerHTML = '';
+  try{
+    const stats = await apiGet('getStats');
+    state.stats = stats;
+    setConnStatus(true);
+    document.getElementById('kpiGrid').innerHTML = `
+      ${kpi('Total Verifications', stats.totalVerifications)}
+      ${kpi("Today's Verifications", stats.todaysVerifications)}
+      ${kpi('Manual Review Pending', stats.manualReviewPending)}
+      ${kpi('Average Confidence', stats.averageConfidence + '%')}
+      ${kpi('Verified DB Size', stats.databaseSize)}
+      ${kpi('Incoming Queue', stats.incomingQueue)}
+      ${kpi('Original', stats.classificationCounts.Original||0)}
+      ${kpi('Product Mismatch', stats.classificationCounts['Product Mismatch']||0)}
+    `;
+    const results = await apiGet('getResults');
+    state.results = results;
+    const recent = [...results].sort((a,b)=> new Date(b.Timestamp)-new Date(a.Timestamp)).slice(0,15);
+    document.getElementById('recentActivityTable').innerHTML = recent.length ? renderTable(recent,
+      ['AWB','Product Name','Category','Classification','Confidence','Status','Timestamp'],
+      (row,col)=> col==='Classification'||col==='Status' ? badge(row[col]) : row[col]
+    ) : '<div class="empty-state">No verifications yet — head to Upload.</div>';
+  }catch(e){
+    setConnStatus(false);
+    banner.innerHTML = `<div class="setup-banner"><b>Connection error:</b> ${e.message}</div>`;
+  }
+}
+function kpi(label, value){
+  return `<div class="kpi"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div></div>`;
+}
+function renderTable(rows, columns, cellFn){
+  let html = '<table><thead><tr>' + columns.map(c=>`<th>${c}</th>`).join('') + '</tr></thead><tbody>';
+  rows.forEach(row=>{
+    html += '<tr>' + columns.map(c=> `<td>${cellFn ? cellFn(row,c) : (row[c]!==undefined?row[c]:'')}</td>`).join('') + '</tr>';
+  });
+  html += '</tbody></table>';
+  return html;
+}
+
+/* ==================================================================
+   UPLOAD
+   ================================================================== */
+let pendingCsvRows = [];
+document.getElementById('csvFile').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    const lines = ev.target.result.split(/\r?\n/).filter(l=>l.trim());
+    const headers = lines[0].split(',').map(h=>h.trim());
+    pendingCsvRows = lines.slice(1).map(line=>{
+      const cells = line.split(',');
+      const obj = {};
+      headers.forEach((h,i)=> obj[h] = (cells[i]||'').trim());
+      return obj;
+    });
+    document.getElementById('csvPreview').innerHTML = `<p style="font-size:12px;color:var(--text-muted);">${pendingCsvRows.length} rows parsed.</p>` +
+      renderTable(pendingCsvRows.slice(0,10), headers);
+    document.getElementById('importCsvBtn').disabled = false;
+  };
+  reader.readAsText(file);
+});
+document.getElementById('importCsvBtn').addEventListener('click', async ()=>{
+  try{
+    const res = await apiPost('importIncoming', { rows: pendingCsvRows });
+    showToast(`Imported ${res.added} new rows.`);
+    pendingCsvRows = [];
+    document.getElementById('csvPreview').innerHTML='';
+    document.getElementById('importCsvBtn').disabled = true;
+    loadUpload();
+  }catch(e){ showToast(e.message, true); }
+});
+
+async function loadUpload(){
+  if(!state.webAppUrl) return;
+  try{
+    const [incoming, results] = await Promise.all([apiGet('getIncoming'), apiGet('getResults')]);
+    state.incoming = incoming; state.results = results;
+    const processedAwbs = new Set(results.map(r=>r.AWB));
+    const pending = incoming.filter(r=>!processedAwbs.has(r.AWB));
+    document.getElementById('queueKpis').innerHTML = `
+      ${kpi('Total in Sheet 1', incoming.length)}
+      ${kpi('Already Processed', incoming.length - pending.length)}
+      ${kpi('Pending Verification', pending.length)}
+    `;
+  }catch(e){ showToast(e.message, true); }
+}
+document.getElementById('refreshQueueBtn').addEventListener('click', loadUpload);
+
+document.getElementById('startVerifyBtn').addEventListener('click', async ()=>{
+  const btn = document.getElementById('startVerifyBtn');
+  const limit = parseInt(document.getElementById('batchLimit').value) || 8;
+  const wrap = document.getElementById('progressWrap');
+  const bar = document.getElementById('progressBar');
+  const text = document.getElementById('progressText');
+  wrap.style.display='block'; btn.disabled = true;
+  let totalProcessed = 0, round = 1;
+  try{
+    while(true){
+      text.textContent = `Processing batch ${round} (up to ${limit} shipments)...`;
+      const res = await apiPost('runBatch', { limit });
+      totalProcessed += res.processed.length;
+      text.textContent = `Processed ${totalProcessed} so far. ${res.remaining} remaining in queue. ${res.errors.length ? res.errors.length+' errors.' : ''}`;
+      const pct = res.remaining === 0 ? 100 : Math.min(95, round*15);
+      bar.style.width = pct + '%';
+      if(res.done) break;
+      round++;
+      if(round > 200) { showToast('Stopped after 200 batches — check the queue manually.', true); break; }
+    }
+    bar.style.width='100%';
+    showToast(`Verification complete. ${totalProcessed} shipments processed.`);
+    loadUpload();
+  }catch(e){ showToast(e.message, true); }
+  finally{ btn.disabled = false; }
+});
+
+/* ==================================================================
+   RESULTS
+   ================================================================== */
+async function loadResults(){
+  if(!state.webAppUrl){ return; }
+  try{
+    const results = await apiGet('getResults');
+    state.results = results;
+    populateFilterOptions(results);
+    renderResultsTable(results);
+  }catch(e){ showToast(e.message, true); }
+}
+function populateFilterOptions(results){
+  const cats = [...new Set(results.map(r=>r.Category).filter(Boolean))].sort();
+  const classes = [...new Set(results.map(r=>r.Classification).filter(Boolean))].sort();
+  const statuses = [...new Set(results.map(r=>r.Status).filter(Boolean))].sort();
+  fillSelect('filterCategory', cats);
+  fillSelect('filterClass', classes);
+  fillSelect('filterStatus', statuses);
+}
+function fillSelect(id, options){
+  const sel = document.getElementById(id);
+  const current = sel.value;
+  sel.innerHTML = '<option value="">All</option>' + options.map(o=>`<option value="${o}">${o}</option>`).join('');
+  sel.value = current;
+}
+function renderResultsTable(results){
+  if(!results.length){ document.getElementById('resultsTable').innerHTML = '<div class="empty-state">No results yet.</div>'; return; }
+  let html = renderTable(results, ['AWB','Product Name','Category','Classification','Confidence','Status','Timestamp'],
+    (row,col)=> col==='Classification'||col==='Status' ? badge(row[col]) : row[col]);
+  html += '<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Click a row\'s AWB below to open the review panel.</div>';
+  html += '<div class="field" style="max-width:300px;margin-top:8px;"><select id="reviewAwbPicker"><option value="">Select AWB to review...</option>' +
+    results.filter(r=>r.Status==='Manual Review').map(r=>`<option value="${r.AWB}">${r.AWB} — ${r['Product Name']}</option>`).join('') + '</select></div>';
+  document.getElementById('resultsTable').innerHTML = html;
+  document.getElementById('reviewAwbPicker').addEventListener('change', (e)=>{
+    if(e.target.value) openReview(e.target.value);
+  });
+}
+document.getElementById('applyResultFilters').addEventListener('click', ()=>{
+  const awb = document.getElementById('filterAwb').value.toLowerCase();
+  const cat = document.getElementById('filterCategory').value;
+  const cls = document.getElementById('filterClass').value;
+  const status = document.getElementById('filterStatus').value;
+  let filtered = state.results.filter(r=>
+    (!awb || (r.AWB||'').toLowerCase().includes(awb)) &&
+    (!cat || r.Category===cat) && (!cls || r.Classification===cls) && (!status || r.Status===status)
+  );
+  renderResultsTable(filtered);
+});
+document.getElementById('exportResultsCsv').addEventListener('click', ()=> exportCsv(state.results, 'results.csv'));
+
+async function openReview(awb){
+  const row = state.results.find(r=>r.AWB===awb);
+  if(!row) return;
+  state.currentReviewAwb = awb;
+  document.getElementById('reviewCard').style.display='block';
+  document.getElementById('reviewAwbTitle').textContent = awb;
+  document.getElementById('reviewMeta').textContent = `${row['Product Name']} — ${row.Category}`;
+  document.getElementById('reviewPrediction').innerHTML = badge(row.Classification) + ` (${row.Confidence}%)`;
+  document.getElementById('reviewReason').textContent = row.Reason || '';
+  const sel = document.getElementById('finalRemark');
+  sel.innerHTML = CLASSIFICATIONS.filter(c=>c!=='Needs Manual Review').map(c=>`<option value="${c}" ${c===row.Classification?'selected':''}>${c}</option>`).join('');
+  document.getElementById('reviewNotes').value = '';
+
+  try{
+    const img = await apiGet('getImage', { awb });
+    document.getElementById('reviewImage').src = img.found ? img.dataUrl : '';
+    document.getElementById('zoomSlider').value = 100;
+    document.getElementById('reviewImage').style.width = '100%';
+  }catch(e){ showToast('Could not load image: '+e.message, true); }
+
+  document.getElementById('reviewCard').scrollIntoView({behavior:'smooth'});
+}
+document.getElementById('zoomSlider').addEventListener('input', (e)=>{
+  document.getElementById('reviewImage').style.width = e.target.value + '%';
+});
+document.getElementById('approveBtn').addEventListener('click', async ()=>{
+  if(!state.currentReviewAwb) return;
+  try{
+    await apiPost('approve', {
+      awb: state.currentReviewAwb,
+      remark: document.getElementById('finalRemark').value,
+      verifiedBy: (await storageGet('reviewerName')) || 'reviewer',
+      notes: document.getElementById('reviewNotes').value,
+    });
+    showToast(`${state.currentReviewAwb} approved and added to Verified Database.`);
+    document.getElementById('reviewCard').style.display='none';
+    loadResults();
+  }catch(e){ showToast(e.message, true); }
+});
+document.getElementById('rejectBtn').addEventListener('click', async ()=>{
+  if(!state.currentReviewAwb) return;
+  try{
+    await apiPost('reject', { awb: state.currentReviewAwb });
+    showToast(`${state.currentReviewAwb} marked rejected.`);
+    document.getElementById('reviewCard').style.display='none';
+    loadResults();
+  }catch(e){ showToast(e.message, true); }
+});
+
+/* ==================================================================
+   VERIFIED DATABASE
+   ================================================================== */
+async function loadVerified(){
+  if(!state.webAppUrl) return;
+  try{
+    const verified = await apiGet('getVerified');
+    state.verified = verified;
+    fillSelect('verifiedCategoryFilter', [...new Set(verified.map(v=>v.Category).filter(Boolean))].sort());
+    fillSelect('verifiedRemarkFilter', [...new Set(verified.map(v=>v['Verified Remark']).filter(Boolean))].sort());
+    renderVerifiedTable(verified);
+  }catch(e){ showToast(e.message, true); }
+}
+function renderVerifiedTable(rows){
+  if(!rows.length){ document.getElementById('verifiedTable').innerHTML='<div class="empty-state">No verified records yet.</div>'; return; }
+  document.getElementById('verifiedTable').innerHTML = renderTable(rows,
+    ['AWB','Product Name','Category','Verified Remark','Verified By','Verified Date'],
+    (row,col)=> col==='Verified Remark' ? badge(row[col]) : row[col]);
+}
+document.getElementById('applyVerifiedFilters').addEventListener('click', ()=>{
+  const q = document.getElementById('verifiedSearch').value.toLowerCase();
+  const cat = document.getElementById('verifiedCategoryFilter').value;
+  const remark = document.getElementById('verifiedRemarkFilter').value;
+  const filtered = state.verified.filter(v=>
+    (!q || (v.AWB||'').toLowerCase().includes(q) || (v['Product Name']||'').toLowerCase().includes(q)) &&
+    (!cat || v.Category===cat) && (!remark || v['Verified Remark']===remark)
+  );
+  renderVerifiedTable(filtered);
+});
+document.getElementById('exportVerifiedCsv').addEventListener('click', ()=> exportCsv(state.verified, 'verified_database.csv'));
+
+function exportCsv(rows, filename){
+  if(!rows.length){ showToast('Nothing to export.', true); return; }
+  const headers = Object.keys(rows[0]);
+  const csv = [headers.join(',')].concat(rows.map(r=>headers.map(h=>`"${String(r[h]??'').replace(/"/g,'""')}"`).join(','))).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+}
+
+/* ==================================================================
+   ANALYTICS
+   ================================================================== */
+async function loadAnalytics(){
+  if(!state.webAppUrl) return;
+  try{
+    const [results, verified] = await Promise.all([apiGet('getResults'), apiGet('getVerified')]);
+    state.results = results; state.verified = verified;
+    if(!results.length){ document.getElementById('analyticsKpis').innerHTML=''; return; }
+
+    const avgConf = (results.reduce((s,r)=>s+Number(r.Confidence||0),0)/results.length).toFixed(1);
+    const reviewRate = (results.filter(r=>r.Status==='Manual Review').length/results.length*100).toFixed(1);
+    document.getElementById('analyticsKpis').innerHTML = `
+      ${kpi('Total Audits', results.length)}
+      ${kpi('Average Confidence', avgConf+'%')}
+      ${kpi('Manual Review Rate', reviewRate+'%')}
+      ${kpi('Verified DB Growth', verified.length)}
+    `;
+
+    const distCounts = {};
+    CLASSIFICATIONS.forEach(c=>distCounts[c]=0);
+    results.forEach(r=> distCounts[r.Classification] = (distCounts[r.Classification]||0)+1);
+    renderChart('chartDist','doughnut', Object.keys(distCounts), Object.values(distCounts), 'Count');
+
+    const catCounts = {};
+    results.forEach(r=> catCounts[r.Category] = (catCounts[r.Category]||0)+1);
+    const topCats = Object.entries(catCounts).sort((a,b)=>b[1]-a[1]).slice(0,8);
+    renderChart('chartCategories','bar', topCats.map(c=>c[0]), topCats.map(c=>c[1]), 'Shipments');
+
+    const byDay = {};
+    results.forEach(r=>{ const d = (r.Timestamp||'').slice(0,10); if(d) byDay[d]=(byDay[d]||0)+1; });
+    const days = Object.keys(byDay).sort();
+    renderChart('chartTrend','line', days, days.map(d=>byDay[d]), 'Verifications');
+
+    const buckets = ['0-59','60-69','70-79','80-89','90-100'];
+    const bucketCounts = [0,0,0,0,0];
+    results.forEach(r=>{
+      const c = Number(r.Confidence||0);
+      if(c<60) bucketCounts[0]++; else if(c<70) bucketCounts[1]++; else if(c<80) bucketCounts[2]++;
+      else if(c<90) bucketCounts[3]++; else bucketCounts[4]++;
+    });
+    renderChart('chartConfidence','bar', buckets, bucketCounts, 'Shipments');
+
+    const byVDay = {};
+    verified.forEach(v=>{ const d = v['Verified Date']; if(d) byVDay[d]=(byVDay[d]||0)+1; });
+    const vDays = Object.keys(byVDay).sort();
+    let cumulative = 0;
+    const cumCounts = vDays.map(d=> cumulative += byVDay[d]);
+    renderChart('chartGrowth','line', vDays, cumCounts, 'Cumulative Verified');
+  }catch(e){ showToast(e.message, true); }
+}
+function renderChart(canvasId, type, labels, data, label){
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  if(charts[canvasId]) charts[canvasId].destroy();
+  const palette = ['#1D6A3C','#8DC63F','#F5A623','#4A90D9','#C0392B','#6B6B6B','#8E5FD1'];
+  charts[canvasId] = new Chart(ctx, {
+    type,
+    data: { labels, datasets: [{ label, data, backgroundColor: type==='line' ? '#8DC63F55' : palette, borderColor:'#1D6A3C', fill: type==='line' }] },
+    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display: type==='doughnut'}} }
+  });
+}
+
+/* ==================================================================
+   SETTINGS
+   ================================================================== */
+document.getElementById('saveWebAppUrl').addEventListener('click', async ()=>{
+  const url = document.getElementById('webAppUrlInput').value.trim();
+  if(!url){ showToast('Enter a Web App URL first.', true); return; }
+  state.webAppUrl = url;
+  await storageSet('webAppUrl', url);
+  showToast('Saved. Testing connection...');
+  await testConnection();
+});
+document.getElementById('testConnection').addEventListener('click', testConnection);
+async function testConnection(){
+  const statusEl = document.getElementById('settingsStatus');
+  if(!state.webAppUrl){ state.webAppUrl = document.getElementById('webAppUrlInput').value.trim(); }
+  if(!state.webAppUrl){ statusEl.innerHTML = '<span style="color:var(--danger);">Enter a URL first.</span>'; return; }
+  statusEl.innerHTML = '<span class="spinner"></span>Testing...';
+  try{
+    await apiGet('health');
+    setConnStatus(true);
+    statusEl.innerHTML = '<span style="color:var(--primary-dark);">✅ Connected successfully.</span>';
+    loadHome();
+  }catch(e){
+    setConnStatus(false);
+    statusEl.innerHTML = `<span style="color:var(--danger);">❌ ${e.message}</span>`;
+  }
+}
+
+/* ==================================================================
+   Init
+   ================================================================== */
+(async function init(){
+  const saved = await storageGet('webAppUrl');
+  state.webAppUrl = saved || DEFAULT_WEB_APP_URL;
+  document.getElementById('webAppUrlInput').value = state.webAppUrl;
+  testConnection();
+  loadHome();
+})();
+</script>
+</body>
+</html>
