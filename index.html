@@ -160,10 +160,20 @@
       <div class="card">
         <h3>Verification Queue</h3>
         <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);" id="queueKpis"></div>
-        <div class="field" style="max-width:320px;">
-          <label>Batch size per run (Apps Script executes in short bursts)</label>
-          <input type="number" id="batchLimit" value="8" min="1" max="20">
+        <div class="field-row" style="max-width:640px;">
+          <div>
+            <label>Verification engine</label>
+            <select id="engineSelect">
+              <option value="hash" selected>Free — Perceptual Hash (no API key, in-browser)</option>
+              <option value="vision">Paid — Vision AI (OpenAI, requires key + billing)</option>
+            </select>
+          </div>
+          <div>
+            <label>Batch size per run</label>
+            <input type="number" id="batchLimit" value="8" min="1" max="20">
+          </div>
         </div>
+        <div id="engineNote" class="setup-banner" style="margin-top:0;"></div>
         <div class="btn-row">
           <button class="btn" id="startVerifyBtn">🚀 Start Verification</button>
           <button class="btn secondary" id="refreshQueueBtn">Refresh Queue</button>
@@ -479,28 +489,153 @@ async function loadUpload(){
 }
 document.getElementById('refreshQueueBtn').addEventListener('click', loadUpload);
 
+function updateEngineNote(){
+  const engine = document.getElementById('engineSelect').value;
+  const note = document.getElementById('engineNote');
+  if(engine === 'hash'){
+    note.innerHTML = '<b>Free engine:</b> compares each image against your Verified Database using perceptual hashing (visual similarity), entirely in your browser. No API key, no cost, no rate limits. It measures "does this look like a known-verified example" — it does not semantically understand the image the way a Vision AI model would.';
+  } else {
+    note.innerHTML = '<b>Paid engine:</b> sends each image to OpenAI Vision for semantic classification. Requires OPENAI_API_KEY set in Apps Script (Script Properties) and active OpenAI billing — see Settings tab for setup notes.';
+  }
+}
+document.getElementById('engineSelect').addEventListener('change', updateEngineNote);
+updateEngineNote();
+
+/* ---- Perceptual hash engine (dHash + Hamming distance) — free, in-browser ---- */
+const HASH_THRESH_ORIGINAL = 95;
+const HASH_THRESH_DOUBTFUL = 80;
+
+function computeHashFromDataUrl(dataUrl){
+  return new Promise((resolve, reject)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      try{
+        const w=9, h=8;
+        const c = document.createElement('canvas');
+        c.width=w; c.height=h;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img,0,0,w,h);
+        const data = ctx.getImageData(0,0,w,h).data;
+        const gray = [];
+        for(let i=0;i<data.length;i+=4) gray.push(0.299*data[i]+0.587*data[i+1]+0.114*data[i+2]);
+        let hash='';
+        for(let row=0; row<h; row++){
+          for(let col=0; col<w-1; col++){
+            hash += gray[row*w+col] > gray[row*w+col+1] ? '1' : '0';
+          }
+        }
+        resolve(hash);
+      }catch(e){ reject(e); }
+    };
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+function hammingSim(h1, h2){
+  if(!h1 || !h2 || h1.length !== h2.length) return 0;
+  let diff = 0;
+  for(let i=0;i<h1.length;i++) if(h1[i]!==h2[i]) diff++;
+  return Math.round(((h1.length-diff)/h1.length)*1000)/10;
+}
+
+const imageHashCache = {}; // AWB -> hash, avoids re-fetching/re-hashing verified images every batch
+
+async function getHashForAwb(awb){
+  if(imageHashCache[awb]) return imageHashCache[awb];
+  const img = await apiGet('getImage', { awb });
+  if(!img.found) return null;
+  const hash = await computeHashFromDataUrl(img.dataUrl);
+  imageHashCache[awb] = hash;
+  return hash;
+}
+
+async function classifyWithHash(row, verifiedDb){
+  const currentHash = await getHashForAwb(row.AWB);
+  if(!currentHash){
+    return { classification:'Needs Manual Review', confidence:0, reason:'Image not found in Drive folder for this AWB.' };
+  }
+  const candidates = verifiedDb.filter(v =>
+    (v.Category||'').toLowerCase().trim() === (row['Product Category']||'').toLowerCase().trim()
+  ).slice(0, 15); // cap candidates per AWB to keep batches fast
+
+  if(!candidates.length){
+    return { classification:'Needs Manual Review', confidence:0, reason:'No verified reference images yet for this category — nothing to compare against.' };
+  }
+
+  let best = null;
+  for(const cand of candidates){
+    const candHash = await getHashForAwb(cand.AWB);
+    if(!candHash) continue;
+    const sim = hammingSim(currentHash, candHash);
+    if(!best || sim > best.sim) best = { sim, remark: cand['Verified Remark'], awb: cand.AWB };
+  }
+
+  if(!best){
+    return { classification:'Needs Manual Review', confidence:0, reason:'Could not load any verified reference images for this category to compare against.' };
+  }
+  if(best.sim >= HASH_THRESH_ORIGINAL){
+    return { classification: best.remark, confidence: best.sim, reason: `Perceptual hash match ${best.sim}% against verified ${best.awb} (${best.remark}).` };
+  }
+  if(best.sim >= HASH_THRESH_DOUBTFUL){
+    return { classification:'Needs Manual Review', confidence: best.sim, reason: `Doubtful — closest verified match only ${best.sim}% similar (${best.awb}, ${best.remark}). Needs human eyes.` };
+  }
+  return { classification:'Needs Manual Review', confidence: best.sim, reason: `Low similarity to any verified example (best match ${best.sim}% against ${best.awb}) — possible mismatch, needs review.` };
+}
+
 document.getElementById('startVerifyBtn').addEventListener('click', async ()=>{
   const btn = document.getElementById('startVerifyBtn');
+  const engine = document.getElementById('engineSelect').value;
   const limit = parseInt(document.getElementById('batchLimit').value) || 8;
   const wrap = document.getElementById('progressWrap');
   const bar = document.getElementById('progressBar');
   const text = document.getElementById('progressText');
   wrap.style.display='block'; btn.disabled = true;
-  let totalProcessed = 0, round = 1;
+
   try{
-    while(true){
-      text.textContent = `Processing batch ${round} (up to ${limit} shipments)...`;
-      const res = await apiPost('runBatch', { limit });
-      totalProcessed += res.processed.length;
-      text.textContent = `Processed ${totalProcessed} so far. ${res.remaining} remaining in queue. ${res.errors.length ? res.errors.length+' errors.' : ''}`;
-      const pct = res.remaining === 0 ? 100 : Math.min(95, round*15);
-      bar.style.width = pct + '%';
-      if(res.done) break;
-      round++;
-      if(round > 200) { showToast('Stopped after 200 batches — check the queue manually.', true); break; }
+    if(engine === 'vision'){
+      let totalProcessed = 0, round = 1;
+      while(true){
+        text.textContent = `Processing batch ${round} (up to ${limit} shipments, Vision AI)...`;
+        const res = await apiPost('runBatch', { limit });
+        totalProcessed += res.processed.length;
+        text.textContent = `Processed ${totalProcessed} so far. ${res.remaining} remaining in queue. ${res.errors.length ? res.errors.length+' errors.' : ''}`;
+        bar.style.width = (res.remaining === 0 ? 100 : Math.min(95, round*15)) + '%';
+        if(res.done) break;
+        round++;
+        if(round > 200) { showToast('Stopped after 200 batches — check the queue manually.', true); break; }
+      }
+      bar.style.width='100%';
+      showToast(`Verification complete. ${totalProcessed} shipments processed.`);
+    } else {
+      const [incoming, results, verifiedDb] = await Promise.all([apiGet('getIncoming'), apiGet('getResults'), apiGet('getVerified')]);
+      const processedAwbs = new Set(results.map(r=>r.AWB));
+      const pending = incoming.filter(r=>!processedAwbs.has(r.AWB)).slice(0, limit);
+
+      if(!pending.length){
+        showToast('Nothing pending to verify.');
+      } else {
+        let done = 0;
+        for(const row of pending){
+          text.textContent = `Hashing ${row.AWB} (${done+1}/${pending.length})...`;
+          bar.style.width = Math.round((done/pending.length)*95) + '%';
+          try{
+            const result = await classifyWithHash(row, verifiedDb);
+            await apiPost('submitClassification', {
+              awb: row.AWB, classification: result.classification,
+              confidence: result.confidence, reason: result.reason,
+            });
+          }catch(e){
+            await apiPost('submitClassification', {
+              awb: row.AWB, classification: 'Needs Manual Review', confidence: 0,
+              reason: 'Client-side hashing error: ' + e.message,
+            });
+          }
+          done++;
+        }
+        bar.style.width='100%';
+        showToast(`Verification complete. ${done} shipments processed (free engine).`);
+      }
     }
-    bar.style.width='100%';
-    showToast(`Verification complete. ${totalProcessed} shipments processed.`);
     loadUpload();
   }catch(e){ showToast(e.message, true); }
   finally{ btn.disabled = false; }
