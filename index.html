@@ -203,6 +203,12 @@
           <button class="btn secondary" id="applyResultFilters">Apply Filters</button>
           <button class="btn secondary" id="exportResultsCsv">⬇️ Export CSV</button>
         </div>
+        <div class="btn-row" style="margin-bottom:10px;">
+          <button class="btn secondary" id="selectAllResults">Select All (filtered)</button>
+          <button class="btn secondary" id="clearSelectionResults">Clear Selection</button>
+          <button class="btn" id="bulkApproveOriginalBtn">✅ Mark Selected as Original → Verified Database</button>
+          <span id="bulkSelectionCount" style="align-self:center;font-size:12px;color:var(--text-muted);"></span>
+        </div>
         <div id="resultsTable"><div class="empty-state">No data loaded yet.</div></div>
       </div>
 
@@ -677,18 +683,66 @@ function fillSelect(id, options){
   sel.innerHTML = '<option value="">All</option>' + options.map(o=>`<option value="${o}">${o}</option>`).join('');
   sel.value = current;
 }
+let selectedAwbs = new Set();
+
 function renderResultsTable(results){
   if(!results.length){ document.getElementById('resultsTable').innerHTML = '<div class="empty-state">No results yet.</div>'; return; }
-  let html = renderTable(results, ['AWB','Product Name','Category','Classification','Confidence','Status','Timestamp'],
-    (row,col)=> col==='Classification'||col==='Status' ? badge(row[col]) : row[col]);
-  html += '<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Click a row\'s AWB below to open the review panel.</div>';
+  const columns = ['AWB','Product Name','Category','Classification','Confidence','Status','Timestamp'];
+  let html = '<table><thead><tr><th></th>' + columns.map(c=>`<th>${c}</th>`).join('') + '</tr></thead><tbody>';
+  results.forEach(row=>{
+    const checked = selectedAwbs.has(row.AWB) ? 'checked' : '';
+    html += `<tr><td><input type="checkbox" class="rowSelect" data-awb="${row.AWB}" ${checked}></td>` +
+      columns.map(c=> `<td>${(c==='Classification'||c==='Status') ? badge(row[c]) : (row[c]!==undefined?row[c]:'')}</td>`).join('') +
+      '</tr>';
+  });
+  html += '</tbody></table>';
+  html += '<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">Tick rows above to bulk-approve, or pick one below for the full review panel.</div>';
   html += '<div class="field" style="max-width:300px;margin-top:8px;"><select id="reviewAwbPicker"><option value="">Select AWB to review...</option>' +
     results.filter(r=>r.Status==='Manual Review').map(r=>`<option value="${r.AWB}">${r.AWB} — ${r['Product Name']}</option>`).join('') + '</select></div>';
   document.getElementById('resultsTable').innerHTML = html;
   document.getElementById('reviewAwbPicker').addEventListener('change', (e)=>{
     if(e.target.value) openReview(e.target.value);
   });
+  document.querySelectorAll('.rowSelect').forEach(cb=>{
+    cb.addEventListener('change', ()=>{
+      if(cb.checked) selectedAwbs.add(cb.dataset.awb); else selectedAwbs.delete(cb.dataset.awb);
+      updateBulkSelectionCount();
+    });
+  });
+  updateBulkSelectionCount();
 }
+function updateBulkSelectionCount(){
+  const el = document.getElementById('bulkSelectionCount');
+  if(el) el.textContent = selectedAwbs.size ? `${selectedAwbs.size} selected` : '';
+}
+document.getElementById('selectAllResults').addEventListener('click', ()=>{
+  document.querySelectorAll('.rowSelect').forEach(cb=>{ cb.checked = true; selectedAwbs.add(cb.dataset.awb); });
+  updateBulkSelectionCount();
+});
+document.getElementById('clearSelectionResults').addEventListener('click', ()=>{
+  selectedAwbs.clear();
+  document.querySelectorAll('.rowSelect').forEach(cb=> cb.checked = false);
+  updateBulkSelectionCount();
+});
+document.getElementById('bulkApproveOriginalBtn').addEventListener('click', async ()=>{
+  if(!selectedAwbs.size){ showToast('Select at least one row first.', true); return; }
+  const awbs = Array.from(selectedAwbs);
+  const btn = document.getElementById('bulkApproveOriginalBtn');
+  btn.disabled = true;
+  let done = 0, failed = 0;
+  const verifiedBy = (await storageGet('reviewerName')) || 'reviewer';
+  for(const awb of awbs){
+    try{
+      await apiPost('approve', { awb, remark: 'Original', verifiedBy, notes: 'Bulk-approved as Original (seed data for Verified Database).' });
+      done++;
+    }catch(e){ failed++; }
+    showToast(`Approving... ${done+failed}/${awbs.length}`);
+  }
+  btn.disabled = false;
+  selectedAwbs.clear();
+  showToast(`Done. ${done} approved as Original${failed ? `, ${failed} failed` : ''}.`);
+  loadResults();
+});
 document.getElementById('applyResultFilters').addEventListener('click', ()=>{
   const awb = document.getElementById('filterAwb').value.toLowerCase();
   const cat = document.getElementById('filterCategory').value;
