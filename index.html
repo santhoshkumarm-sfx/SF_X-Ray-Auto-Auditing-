@@ -164,8 +164,10 @@
           <div>
             <label>Verification engine</label>
             <select id="engineSelect">
-              <option value="hash" selected>Free — Perceptual Hash (no API key, in-browser)</option>
-              <option value="vision">Paid — Vision AI (OpenAI, requires key + billing)</option>
+              <option value="groq" selected>Free — Groq Vision AI (no Google account needed)</option>
+              <option value="gemini">Free — Gemini Vision AI (requires Google AI Studio access)</option>
+              <option value="hash">Free — Perceptual Hash (similarity only, no reasoning)</option>
+              <option value="vision">Paid — OpenAI Vision AI (requires key + billing)</option>
             </select>
           </div>
           <div>
@@ -492,8 +494,12 @@ document.getElementById('refreshQueueBtn').addEventListener('click', loadUpload)
 function updateEngineNote(){
   const engine = document.getElementById('engineSelect').value;
   const note = document.getElementById('engineNote');
-  if(engine === 'hash'){
-    note.innerHTML = '<b>Free engine:</b> compares each image against your Verified Database using perceptual hashing (visual similarity), entirely in your browser. No API key, no cost, no rate limits. It measures "does this look like a known-verified example" — it does not semantically understand the image the way a Vision AI model would.';
+  if(engine === 'groq'){
+    note.innerHTML = '<b>Free, real AI, no Google account needed:</b> sends each image to Groq (a separate platform from Google — just an email signup at console.groq.com, no Cloud project, no billing card). Same semantic reasoning as Gemini — does this look like a shoe/shirt/electronics matching the expected product — and works even with an empty Verified Database. Free tier: <b>1,000 requests/day at 30/minute</b> (faster than Gemini). Requires a free GROQ_API_KEY set in Apps Script Script Properties. Note: Groq currently lists this vision model as "Preview," so it could change on their end.';
+  } else if(engine === 'gemini'){
+    note.innerHTML = '<b>Free, real AI:</b> sends each image to Google Gemini, which reasons about the actual visual content — e.g. does this look like a shoe/shirt/electronics matching the expected product. Works even when your Verified Database has no match yet. Requires a free GEMINI_API_KEY from Google AI Studio (aistudio.google.com/apikey) — <b>needs Google Cloud/AI Studio access</b>, so skip this if your organization blocks that. Free tier covers 1,500 requests/day at ~13-15/min.';
+  } else if(engine === 'hash'){
+    note.innerHTML = '<b>Free engine:</b> compares each image against your Verified Database using perceptual hashing (visual similarity), entirely in your browser. No API key, no cost, no rate limits. It measures "does this look like a known-verified example" — it does not semantically understand the image, and has nothing to say when no similar verified example exists yet.';
   } else {
     note.innerHTML = '<b>Paid engine:</b> sends each image to OpenAI Vision for semantic classification. Requires OPENAI_API_KEY set in Apps Script (Script Properties) and active OpenAI billing — see Settings tab for setup notes.';
   }
@@ -592,11 +598,15 @@ document.getElementById('startVerifyBtn').addEventListener('click', async ()=>{
   wrap.style.display='block'; btn.disabled = true;
 
   try{
-    if(engine === 'vision'){
+    if(engine === 'vision' || engine === 'gemini' || engine === 'groq'){
+      const labelMap = { gemini: 'Gemini', groq: 'Groq', vision: 'OpenAI Vision AI' };
+      const actionMap = { gemini: 'runBatchGemini', groq: 'runBatchGroq', vision: 'runBatch' };
+      const label = labelMap[engine];
+      const action = actionMap[engine];
       let totalProcessed = 0, round = 1;
       while(true){
-        text.textContent = `Processing batch ${round} (up to ${limit} shipments, Vision AI)...`;
-        const res = await apiPost('runBatch', { limit });
+        text.textContent = `Processing batch ${round} (up to ${limit} shipments, ${label})...`;
+        const res = await apiPost(action, { limit });
         totalProcessed += res.processed.length;
         text.textContent = `Processed ${totalProcessed} so far. ${res.remaining} remaining in queue. ${res.errors.length ? res.errors.length+' errors.' : ''}`;
         bar.style.width = (res.remaining === 0 ? 100 : Math.min(95, round*15)) + '%';
