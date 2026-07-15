@@ -4,7 +4,22 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SF X-ray Auto Auditing</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.3/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.3/chart.umd.min.js" onerror="this.dataset.failed='1'"></script>
+<script>
+  // Some corporate networks block cdnjs.cloudflare.com — fall back to a
+  // different CDN if the first one didn't load.
+  (function(){
+    function tryFallback(){
+      if (typeof Chart === 'undefined') {
+        var s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js';
+        document.head.appendChild(s);
+      }
+    }
+    if (document.readyState === 'complete') tryFallback();
+    else window.addEventListener('load', tryFallback);
+  })();
+</script>
 <style>
   :root{
     --primary:#1D6A3C; --primary-dark:#134D2B; --accent:#8DC63F; --warn:#F5A623;
@@ -897,7 +912,20 @@ async function loadAnalytics(){
   }catch(e){ showToast(e.message, true); }
 }
 function renderChart(canvasId, type, labels, data, label){
-  const ctx = document.getElementById(canvasId).getContext('2d');
+  let canvas = document.getElementById(canvasId);
+  if (typeof Chart === 'undefined') {
+    renderFallbackBars(canvas, labels, data);
+    return;
+  }
+  if (canvas.tagName !== 'CANVAS') {
+    // Chart.js finished loading after an earlier fallback render replaced
+    // this canvas with a plain div — swap a fresh canvas back in.
+    const fresh = document.createElement('canvas');
+    fresh.id = canvasId;
+    canvas.replaceWith(fresh);
+    canvas = fresh;
+  }
+  const ctx = canvas.getContext('2d');
   if(charts[canvasId]) charts[canvasId].destroy();
   const palette = ['#1D6A3C','#8DC63F','#F5A623','#4A90D9','#C0392B','#6B6B6B','#8E5FD1'];
   charts[canvasId] = new Chart(ctx, {
@@ -905,6 +933,29 @@ function renderChart(canvasId, type, labels, data, label){
     data: { labels, datasets: [{ label, data, backgroundColor: type==='line' ? '#8DC63F55' : palette, borderColor:'#1D6A3C', fill: type==='line' }] },
     options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display: type==='doughnut'}} }
   });
+}
+
+// Simple dependency-free bar rendering, used only if Chart.js itself
+// couldn't load (e.g. CDN blocked by a network policy) — replaces the
+// <canvas> with plain HTML bars so Analytics still shows real numbers.
+function renderFallbackBars(canvas, labels, data){
+  const max = Math.max(1, ...data);
+  const rows = labels.map((l, i) => {
+    const pct = Math.round((data[i] / max) * 100);
+    return `<div style="margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:2px;">
+        <span>${l}</span><span>${data[i]}</span>
+      </div>
+      <div style="background:#EDEFEC;border-radius:6px;height:10px;overflow:hidden;">
+        <div style="background:var(--primary);height:100%;width:${pct}%;"></div>
+      </div>
+    </div>`;
+  }).join('');
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'height:100%;overflow-y:auto;padding:4px 2px;';
+  wrapper.innerHTML = rows || '<div class="empty-state">No data.</div>';
+  canvas.replaceWith(wrapper);
+  wrapper.id = canvas.id; // keep the id so repeat calls can find/replace it again
 }
 
 /* ==================================================================
